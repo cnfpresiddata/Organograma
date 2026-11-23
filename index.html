@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<!-- index.html: página de entrada do Organograma CONFEA (GitHub Pages, cnfpresiddata/Organograma).
+     Não guarda dado nenhum. Depois do login, baixa do bucket privado "organograma" do Supabase do CONFEA
+     a última versão publicada pela rotina das 06h e mostra o painel. Fonte: D:\CONFEA\Organograma CONFEA\web -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Organograma CONFEA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--azul:#00509b;--tinta:#18222f;--tinta2:#435164;--fundo:#f4f6f9;--sup:#fff;--linha:#d2dae4;--aviso:#8a5a00;--aviso-bg:#fff4d6;--erro:#b42318;--erro-bg:#fde8e6}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:"Jost","Segoe UI",Verdana,sans-serif;background:var(--fundo);color:var(--tinta);font-size:15px;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+.tela{height:100vh;height:100dvh;display:flex;align-items:center;justify-content:center;padding:16px}
+form{width:min(360px,100%);background:var(--sup);border:1px solid var(--linha);border-radius:12px;padding:24px;display:flex;flex-direction:column;gap:14px}
+h1{margin:0;font-size:22px;font-weight:600;color:var(--azul)}
+p{margin:0}
+.sub{color:var(--tinta2);font-size:13.5px}
+label{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:500;color:var(--tinta2)}
+input{height:42px;padding:0 12px;border:1px solid var(--linha);border-radius:8px;background:#fff;font-size:15px}
+input:focus{outline:2px solid var(--azul);outline-offset:1px}
+.bt{height:44px;border:0;border-radius:8px;background:var(--tinta);color:#fff;font-weight:600;cursor:pointer}
+.bt:disabled{opacity:.6;cursor:wait}
+.link{all:unset;cursor:pointer;color:var(--azul);font-size:13px;text-decoration:underline;align-self:flex-start}
+.msg{color:var(--erro);font-size:13.5px;min-height:1em}
+.ajuda{font-size:13px;color:var(--tinta2);line-height:1.45}
+.app{display:flex;flex-direction:column;height:100vh;height:100dvh}
+.barra{flex:none;display:flex;align-items:center;gap:10px;padding:4px 12px;min-height:32px;font-size:12.5px;background:var(--sup);border-bottom:1px solid var(--linha);color:var(--tinta2);flex-wrap:wrap}
+.barra .cresce{flex:1;min-width:0}
+.barra.aviso{background:var(--aviso-bg);color:var(--aviso)}
+.barra.erro{background:var(--erro-bg);color:var(--erro)}
+.barra button{border:1px solid var(--linha);background:#fff;border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12.5px;color:var(--tinta)}
+iframe{flex:1;border:0;width:100%;background:var(--fundo)}
+.carregando{color:var(--tinta2);text-align:center;line-height:1.5}
+</style>
+</head>
+<body>
+<div id="raiz"></div>
+
+<template id="t-login">
+  <div class="tela">
+    <form id="f-login" autocomplete="on">
+      <h1>Organograma CONFEA</h1>
+      <p class="sub">Acesso restrito. Entre com o seu usuário e a sua senha.</p>
+      <label>Usuário<input id="usuario" name="username" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
+      <label>Senha<input id="senha" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="bt" id="entrar" type="submit">Entrar</button>
+      <p class="msg" id="msg" role="alert"></p>
+      <button class="link" type="button" id="aj">Como entrar?</button>
+      <p class="ajuda" id="ajtx" hidden>Digite só o seu usuário, sem e-mail. Exemplo: <b>bruno</b>. A senha é entregue pelo Bruno (Gerência de Dados). Esqueceu a senha? Peça uma nova ao Bruno.</p>
+    </form>
+  </div>
+</template>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://rmjlqngrfgorhcwaarou.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_40GwhQx8DvW6QF99Yt0xhQ_VpGQc5an';   // chave pública; o acesso é controlado pelo login e pelas regras do banco
+const DOMINIO = 'organograma.cnfpresiddata.local';
+const LIMITE_HORAS = 26;   // depois disso a barra avisa que os dados não são de hoje
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: 'organograma' }, auth: { persistSession: true, autoRefreshToken: true } });
+const $ = s => document.querySelector(s);
+const raiz = $('#raiz');
+let urlBlob = null;
+
+const dataBR = iso => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function telaLogin(msg) {
+  if (urlBlob) { URL.revokeObjectURL(urlBlob); urlBlob = null; }
+  raiz.innerHTML = $('#t-login').innerHTML;
+  if (msg) $('#msg').textContent = msg;
+  $('#aj').onclick = () => { const t = $('#ajtx'); t.hidden = !t.hidden; };
+  $('#f-login').onsubmit = async e => {
+    e.preventDefault();
+    const bt = $('#entrar'); bt.disabled = true; $('#msg').textContent = '';
+    const u = $('#usuario').value.trim().toLowerCase().replace(/@.*$/, '');
+    const { error } = await sb.auth.signInWithPassword({ email: `${u}@${DOMINIO}`, password: $('#senha').value });
+    if (error) {
+      bt.disabled = false;
+      $('#msg').textContent = /invalid/i.test(error.message) ? 'Usuário ou senha incorretos.' : 'Não foi possível entrar. Tente de novo em instantes.';
+      return;
+    }
+    sb.rpc('registrar_acesso', { p_acao: 'entrou' }).then(() => {}, () => {});
+    abrir();
+  };
+}
+
+async function comTentativas(fn, n = 3) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) { if (i >= n) throw e; await new Promise(r => setTimeout(r, 1500 * i)); }
+  }
+}
+
+async function abrir() {
+  raiz.innerHTML = '<div class="tela"><p class="carregando">Carregando o organograma...<br>O arquivo tem cerca de 6 MB.</p></div>';
+  try {
+    const perfil = await comTentativas(async () => { const { data, error } = await sb.rpc('meu_perfil'); if (error) throw error; return data && data[0]; });
+    if (!perfil) { await sb.auth.signOut(); return telaLogin('Este usuário não tem acesso ao Organograma. Fale com o Bruno.'); }
+    const sit = await comTentativas(async () => { const { data, error } = await sb.rpc('situacao'); if (error) throw error; return data && data[0]; });
+    if (!sit || !sit.arquivo) return barraEMensagem(perfil, 'erro', 'Ainda não há versão publicada do organograma.');
+    const blob = await comTentativas(async () => { const { data, error } = await sb.storage.from('organograma').download(sit.arquivo); if (error) throw error; return data; });
+    const html = await blob.text();
+    urlBlob = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+
+    const horas = (Date.now() - new Date(sit.dados_de).getTime()) / 36e5;
+    const falhou = sit.ultimo_status && !['publicada', 'rodando'].includes(sit.ultimo_status);
+    let tipo = '', texto = `Dados do CorporeRM de ${dataBR(sit.dados_de)}: ${sit.servidores} servidores, ${sit.unidades} unidades.`;
+    if (falhou) { tipo = 'aviso'; texto += ` A atualização de ${dataBR(sit.ultima_tentativa)} não foi publicada; esta é a última versão boa.`; }
+    else if (horas > LIMITE_HORAS) { tipo = 'aviso'; texto += ' Os dados não são de hoje.'; }
+    raiz.innerHTML = `<div class="app"><div class="barra ${tipo}" role="status"><span class="cresce">${esc(texto)}</span><span>${esc(perfil.nome)}</span><button id="sair" type="button">Sair</button></div><iframe id="painel" title="Organograma CONFEA" src="${urlBlob}"></iframe></div>`;
+    $('#sair').onclick = sair;
+  } catch (e) {
+    console.error(e);
+    const s = (await sb.auth.getSession()).data.session;
+    if (!s) return telaLogin('A sessão terminou. Entre de novo.');
+    raiz.innerHTML = `<div class="tela"><p class="carregando">Não foi possível carregar o organograma.<br>Verifique a internet e recarregue a página.<br><button class="bt" style="margin-top:12px;padding:0 18px" onclick="location.reload()">Recarregar</button></p></div>`;
+  }
+}
+
+function barraEMensagem(perfil, tipo, texto) {
+  raiz.innerHTML = `<div class="app"><div class="barra ${tipo}" role="status"><span class="cresce">${esc(texto)}</span><span>${esc(perfil.nome)}</span><button id="sair" type="button">Sair</button></div></div>`;
+  $('#sair').onclick = sair;
+}
+
+async function sair() {
+  await sb.rpc('registrar_acesso', { p_acao: 'saiu' }).then(() => {}, () => {});
+  await sb.auth.signOut();
+  telaLogin();
+}
+
+sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT' && !$('#f-login')) telaLogin('A sessão terminou. Entre de novo.'); });
+sb.auth.getSession().then(({ data }) => data.session ? abrir() : telaLogin());
+</script>
+</body>
+</html>
